@@ -94,7 +94,7 @@ def main():
     perceptual = None
     if args.lpips:
         import lpips
-        perceptual = lpips.LPIPS(net="vgg").to(args.device).eval()
+        perceptual = lpips.LPIPS(net="vgg", version="0.1").to(args.device).eval()
     outputs = [args.output / (p.name + ".png") for p in files]
     for source, target in zip(files, outputs):
         if source.resolve() == target.resolve() or target.exists():
@@ -128,13 +128,18 @@ def main():
                 reference_y = reference @ coefficients + 16
                 row = {"image": source.name,
                        "PSNR_RGB": peak_signal_noise_ratio(reference, quantized, data_range=255),
-                       "SSIM_RGB": structural_similarity(reference, quantized, data_range=255, channel_axis=2),
+                       "SSIM_RGB": structural_similarity(reference, quantized, data_range=255, channel_axis=2,
+                                                         win_size=7, gaussian_weights=False, use_sample_covariance=True),
                        "PSNR_Y": peak_signal_noise_ratio(reference_y, output_y, data_range=255),
-                       "SSIM_Y": structural_similarity(reference_y, output_y, data_range=255)}
+                       "SSIM_Y": structural_similarity(reference_y, output_y, data_range=255,
+                                                       win_size=7, gaussian_weights=False, use_sample_covariance=True)}
                 if perceptual is not None:
-                    # Source evaluator uses raw (unclipped) restored floats for LPIPS.
-                    row["LPIPS_VGG"] = perceptual(output * 2 - 1,
-                                                reference_tensor.to(args.device) * 2 - 1).item()
+                    # Use the exact RGB8 images scored above and saved to PNG.
+                    pred_lpips = torch.from_numpy(quantized.copy()).permute(2, 0, 1)[None]
+                    gt_lpips = torch.from_numpy(reference.copy()).permute(2, 0, 1)[None]
+                    pred_lpips = pred_lpips.to(args.device, dtype=torch.float32) / 255 * 2 - 1
+                    gt_lpips = gt_lpips.to(args.device, dtype=torch.float32) / 255 * 2 - 1
+                    row["LPIPS_VGG"] = perceptual(pred_lpips, gt_lpips).item()
                 rows.append(row)
             Image.fromarray(quantized).save(target)
             print(f"Saved {target}")
